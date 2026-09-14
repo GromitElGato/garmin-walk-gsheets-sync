@@ -20,6 +20,10 @@ jobs:
         run: |
           pip install garminconnect
 
+      - name: Show test script
+        run: |
+          cat test_garmin.py
+
       - name: Test Garmin
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
