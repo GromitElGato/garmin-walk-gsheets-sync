@@ -1,10 +1,11 @@
-name: Test Garmin
+```yaml
+name: Garmin synchronisatie
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  sync:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,11 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install garminconnect
-
-      - name: Show test script
-        run: |
-          cat test_garmin.py
+          pip install garminconnect gspread google-auth
 
       - name: Test Garmin
         env:
@@ -30,3 +27,13 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
         run: |
           python test_garmin.py
+
+      - name: Sync Garmin walks to Google Sheets
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: |
+          python sync_garmin.py
+```
