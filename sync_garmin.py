@@ -1,170 +1,246 @@
+```python
 import os
 import json
+from datetime import datetime
+
 from garminconnect import Garmin
 from google.oauth2.service_account import Credentials
 import gspread
-from datetime import datetime, timedelta
 
-# Load environment variables from .env file if it exists (for local testing)
-if os.path.exists('.env'):
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except ImportError:
-        print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
-        pass
 
-def format_duration(seconds):
-    """Convert seconds to minutes (rounded to 2 decimals)"""
-    return round(seconds / 60, 2) if seconds else 0
+SHEET_NAME = "2026"
 
-def format_pace(distance_meters, duration_seconds):
-    """Calculate pace in min/km"""
-    if not distance_meters or not duration_seconds:
-        return 0
-    distance_km = distance_meters / 1000
-    pace_seconds = duration_seconds / distance_km
-    return round(pace_seconds / 60, 2)  # Convert to min/km
 
 def main():
-    print("Starting Garmin running activities sync...")
-    
-    # Get credentials from environment variables
-    garmin_email = os.environ.get('GARMIN_EMAIL')
-    garmin_password = os.environ.get('GARMIN_PASSWORD')
-    google_creds_json = os.environ.get('GOOGLE_CREDENTIALS')
-    sheet_id = os.environ.get('SHEET_ID')  # Add sheet ID from environment
-    
-    # For local testing: try to load from credentials.json file
-    if not google_creds_json and os.path.exists('credentials.json'):
-        print("Loading Google credentials from credentials.json...")
-        with open('credentials.json', 'r') as f:
-            google_creds_json = f.read()
-    
+    print("=== Garmin wandelingen synchroniseren ===")
+
+    # ---------------------------------------------------------
+    # 1. Credentials
+    # ---------------------------------------------------------
+
+    garmin_email = os.environ.get("GARMIN_EMAIL")
+    garmin_password = os.environ.get("GARMIN_PASSWORD")
+    google_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    sheet_id = os.environ.get("SHEET_ID")
+
     if not all([garmin_email, garmin_password, google_creds_json, sheet_id]):
-        print("❌ Missing required environment variables")
-        print(f"   GARMIN_EMAIL: {'✓' if garmin_email else '✗'}")
-        print(f"   GARMIN_PASSWORD: {'✓' if garmin_password else '✗'}")
-        print(f"   GOOGLE_CREDENTIALS: {'✓' if google_creds_json else '✗'}")
-        print(f"   SHEET_ID: {'✓' if sheet_id else '✗'}")
+        print("❌ Vereiste GitHub Secrets ontbreken.")
+        print(f"GARMIN_EMAIL: {'✓' if garmin_email else '✗'}")
+        print(f"GARMIN_PASSWORD: {'✓' if garmin_password else '✗'}")
+        print(f"GOOGLE_CREDENTIALS: {'✓' if google_creds_json else '✗'}")
+        print(f"SHEET_ID: {'✓' if sheet_id else '✗'}")
         return
-    
-    # Connect to Garmin
-    print("Connecting to Garmin...")
+
+    # ---------------------------------------------------------
+    # 2. Verbinden met Garmin
+    # ---------------------------------------------------------
+
+    print("Verbinden met Garmin Connect...")
+
     try:
         garmin = Garmin(garmin_email, garmin_password)
         garmin.login()
-        print("✅ Connected to Garmin")
+        print("✅ Verbonden met Garmin Connect")
     except Exception as e:
-        print(f"❌ Failed to connect to Garmin: {e}")
+        print(f"❌ Garmin-login mislukt: {e}")
         return
-    
-    # Get recent activities (last 7 days)
-    print("Fetching recent activities...")
+
+    # ---------------------------------------------------------
+    # 3. Recente activiteiten ophalen
+    # ---------------------------------------------------------
+
+    print("Activiteiten ophalen...")
+
     try:
-        activities = garmin.get_activities(0, 20)  # Get last 20 activities
-        print(f"Found {len(activities)} total activities")
+        activities = garmin.get_activities(0, 50)
+        print(f"✓ {len(activities)} activiteiten opgehaald")
     except Exception as e:
-        print(f"❌ Failed to fetch activities: {e}")
+        print(f"❌ Activiteiten ophalen mislukt: {e}")
         return
-    
-    # Filter for running activities only
-    running_activities = [
-        activity for activity in activities 
-        if activity.get('activityType', {}).get('typeKey', '').lower() in ['running', 'treadmill_running', 'trail_running']
-    ]
-    
-    print(f"Found {len(running_activities)} running activities")
-    
-    if not running_activities:
-        print("No running activities found in recent data")
+
+    # ---------------------------------------------------------
+    # 4. Alleen wandelen selecteren
+    # ---------------------------------------------------------
+
+    walking_activities = []
+
+    for activity in activities:
+        activity_type = (
+            activity.get("activityType", {})
+            .get("typeKey", "")
+            .lower()
+        )
+
+        if activity_type in [
+            "walking",
+            "hiking",
+            "indoor_walking",
+        ]:
+            walking_activities.append(activity)
+
+    print(f"✓ {len(walking_activities)} wandelactiviteiten gevonden")
+
+    if not walking_activities:
+        print("Geen nieuwe wandelactiviteiten gevonden.")
         return
-    
-    # Connect to Google Sheets
-    print("Connecting to Google Sheets...")
+
+    # ---------------------------------------------------------
+    # 5. Verbinden met Google Sheets
+    # ---------------------------------------------------------
+
+    print("Verbinden met Google Sheets...")
+
     try:
         creds_dict = json.loads(google_creds_json)
+
         creds = Credentials.from_service_account_info(
             creds_dict,
             scopes=[
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive'
-            ]
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ],
         )
+
         client = gspread.authorize(creds)
-        sheet = client.open("Garmin Data").sheet1
-        print("✅ Connected to Google Sheets")
+
+        spreadsheet = client.open_by_key(sheet_id)
+        sheet = spreadsheet.worksheet(SHEET_NAME)
+
+        print(f"✅ Verbonden met tabblad '{SHEET_NAME}'")
+
     except Exception as e:
-        print(f"❌ Failed to connect to Google Sheets: {e}")
+        print(f"❌ Google Sheets verbinding mislukt: {e}")
         return
-    
-    # Get existing dates to avoid duplicates
+
+    # ---------------------------------------------------------
+    # 6. Bestaande Garmin-activiteiten controleren
+    #
+    # We controleren kolom E (LINK).
+    # Daardoor kunnen activiteiten met dezelfde Garmin-link
+    # nooit dubbel worden toegevoegd.
+    # ---------------------------------------------------------
+
     try:
         existing_data = sheet.get_all_values()
-        existing_dates = set()
-        if len(existing_data) > 1:  # If there's data beyond headers
-            for row in existing_data[1:]:  # Skip header row
-                if row and row[0]:  # If date column exists
-                    existing_dates.add(row[0])
-        print(f"Found {len(existing_dates)} existing entries")
+
+        existing_links = set()
+
+        for row in existing_data[1:]:
+            if len(row) >= 5 and row[4]:
+                existing_links.add(row[4].strip())
+
+        print(f"✓ {len(existing_links)} bestaande links gevonden")
+
     except Exception as e:
-        print(f"Warning: Could not check existing data: {e}")
-        existing_dates = set()
-    
-    # Process each running activity
+        print(f"❌ Bestaande gegevens konden niet worden gelezen: {e}")
+        return
+
+    # ---------------------------------------------------------
+    # 7. Wandelactiviteiten toevoegen
+    # ---------------------------------------------------------
+
     new_entries = 0
-    for activity in running_activities:
+
+    for activity in reversed(walking_activities):
+
         try:
-            # Parse activity date
-            activity_date = activity.get('startTimeLocal', '')[:10]  # Get YYYY-MM-DD
-            
-            # Skip if already in sheet
-            if activity_date in existing_dates:
-                print(f"Skipping {activity_date} - already exists")
+            activity_id = activity.get("activityId")
+
+            if not activity_id:
+                print("⚠️ Activiteit zonder ID overgeslagen")
                 continue
-            
-            # Extract metrics
-            activity_name = activity.get('activityName', 'Run')
-            distance_meters = activity.get('distance', 0)
-            distance_km = round(distance_meters / 1000, 2) if distance_meters else 0
-            duration_seconds = activity.get('duration', 0)
-            duration_min = format_duration(duration_seconds)
-            avg_pace = format_pace(distance_meters, duration_seconds)
-            avg_hr = activity.get('averageHR', 0) or 0
-            max_hr = activity.get('maxHR', 0) or 0
-            calories = activity.get('calories', 0) or 0
-            avg_cadence = activity.get('averageRunningCadenceInStepsPerMinute', 0) or 0
-            elevation_gain = round(activity.get('elevationGain', 0), 1) if activity.get('elevationGain') else 0
-            activity_type = activity.get('activityType', {}).get('typeKey', 'running')
-            
-            # Prepare row
+
+            garmin_link = (
+                f"https://connect.garmin.com/modern/activity/{activity_id}"
+            )
+
+            # Dubbele activiteit?
+            if garmin_link in existing_links:
+                print(f"↪ Bestaat al: {garmin_link}")
+                continue
+
+            # Datum/tijd
+            start_time = activity.get("startTimeLocal")
+
+            if not start_time:
+                print(f"⚠️ Geen starttijd voor activiteit {activity_id}")
+                continue
+
+            # Garmin geeft bijvoorbeeld:
+            # 2026-09-09 13:30:29
+            try:
+                activity_datetime = datetime.strptime(
+                    start_time,
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            except ValueError:
+                activity_datetime = datetime.fromisoformat(start_time)
+
+            # Afstand
+            distance_meters = activity.get("distance", 0) or 0
+            distance_meters = round(distance_meters)
+
+            # Duur
+            duration_seconds = activity.get("duration", 0) or 0
+            duration_seconds = round(duration_seconds)
+
+            hours = duration_seconds // 3600
+            minutes = (duration_seconds % 3600) // 60
+            seconds = duration_seconds % 60
+
+            duration = f"{hours}:{minutes:02d}:{seconds:02d}"
+
+            # Naam
+            activity_name = activity.get(
+                "activityName",
+                "Wandeling"
+            )
+
+            # Rij A t/m E
             row = [
-                activity_date,
+                activity_datetime.strftime("%-d-%-m-%Y %H:%M:%S"),
                 activity_name,
-                distance_km,
-                duration_min,
-                avg_pace,
-                avg_hr,
-                max_hr,
-                calories,
-                avg_cadence,
-                elevation_gain,
-                activity_type
+                distance_meters,
+                duration,
+                garmin_link,
             ]
-            
-            # Append to sheet
-            sheet.append_row(row)
-            print(f"✅ Added: {activity_date} - {activity_name} ({distance_km} km)")
+
+            # Toevoegen
+            sheet.append_row(
+                row,
+                value_input_option="USER_ENTERED"
+            )
+
+            print(
+                f"✅ Toegevoegd: {activity_datetime} | "
+                f"{activity_name} | "
+                f"{distance_meters} m | "
+                f"{duration}"
+            )
+
+            existing_links.add(garmin_link)
             new_entries += 1
-            
+
         except Exception as e:
-            print(f"❌ Error processing activity: {e}")
-            continue
-    
-    if new_entries > 0:
-        print(f"\n🎉 Successfully added {new_entries} new running activities!")
+            print(f"❌ Fout bij verwerken activiteit: {e}")
+
+    # ---------------------------------------------------------
+    # 8. Resultaat
+    # ---------------------------------------------------------
+
+    print()
+    print("======================================")
+
+    if new_entries:
+        print(
+            f"🎉 {new_entries} nieuwe wandelingen toegevoegd."
+        )
     else:
-        print("\n✓ No new activities to add")
+        print("✓ Geen nieuwe wandelingen gevonden.")
+
+    print("======================================")
+
 
 if __name__ == "__main__":
     main()
+```
