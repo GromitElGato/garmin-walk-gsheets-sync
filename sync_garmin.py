@@ -1,4 +1,5 @@
 import os
+import sys
 import requests
 from datetime import datetime
 
@@ -12,38 +13,54 @@ def main():
     garmin_password = os.environ.get("GARMIN_PASSWORD")
     apps_script_url = os.environ.get("APPS_SCRIPT_URL")
 
+    # ======================================
+    # GitHub Secrets controleren
+    # ======================================
+
     if not garmin_email or not garmin_password or not apps_script_url:
         print("❌ Vereiste GitHub Secrets ontbreken.")
         print(f"GARMIN_EMAIL: {'✓' if garmin_email else '✗'}")
         print(f"GARMIN_PASSWORD: {'✓' if garmin_password else '✗'}")
         print(f"APPS_SCRIPT_URL: {'✓' if apps_script_url else '✗'}")
-        return
+        sys.exit(1)
 
-    # Garmin
+    # ======================================
+    # Verbinden met Garmin
+    # ======================================
+
     print("Verbinden met Garmin Connect...")
 
     try:
         garmin = Garmin(garmin_email, garmin_password)
         garmin.login()
         print("✅ Verbonden met Garmin Connect")
+
     except Exception as e:
         print(f"❌ Garmin-login mislukt: {e}")
-        return
+        sys.exit(1)
 
+    # ======================================
     # Activiteiten ophalen
+    # ======================================
+
     print("Activiteiten ophalen...")
 
     try:
         activities = garmin.get_activities(0, 50)
         print(f"✓ {len(activities)} activiteiten opgehaald")
+
     except Exception as e:
         print(f"❌ Activiteiten ophalen mislukt: {e}")
-        return
+        sys.exit(1)
 
+    # ======================================
     # Alleen wandelactiviteiten
+    # ======================================
+
     walking_activities = []
 
     for activity in activities:
+
         activity_type = (
             activity.get("activityType", {})
             .get("typeKey", "")
@@ -57,16 +74,28 @@ def main():
         ]:
             walking_activities.append(activity)
 
-    print(f"✓ {len(walking_activities)} wandelactiviteiten gevonden")
+    print(
+        f"✓ {len(walking_activities)} "
+        f"wandelactiviteiten gevonden"
+    )
 
+    # Geen wandelingen is geen fout
     if not walking_activities:
         print("Geen wandelactiviteiten gevonden.")
-        return
+        sys.exit(0)
 
+    # ======================================
     # Oudste eerst
+    # ======================================
+
     walking_activities.reverse()
 
     new_entries = 0
+    failed_entries = 0
+
+    # ======================================
+    # Activiteiten verwerken
+    # ======================================
 
     for activity in walking_activities:
 
@@ -75,6 +104,7 @@ def main():
 
             if not activity_id:
                 print("⚠️ Activiteit zonder ID overgeslagen")
+                failed_entries += 1
                 continue
 
             activity_name = activity.get(
@@ -89,32 +119,50 @@ def main():
                     f"⚠️ Geen starttijd voor activiteit "
                     f"{activity_id}"
                 )
+                failed_entries += 1
                 continue
 
+            # ==================================
             # Afstand in meters
+            # ==================================
+
             distance = float(
                 activity.get("distance", 0) or 0
             )
 
+            # ==================================
             # Duur in seconden
+            # ==================================
+
             duration = float(
                 activity.get("duration", 0) or 0
             )
 
+            # ==================================
             # Garmin-link
+            # ==================================
+
             link = (
-                f"https://connect.garmin.com/modern/activity/"
+                "https://connect.garmin.com/modern/activity/"
                 f"{activity_id}"
             )
 
+            # ==================================
             # Datum controleren
+            # ==================================
+
             try:
                 datetime.strptime(
                     start_time,
                     "%Y-%m-%d %H:%M:%S"
                 )
+
             except ValueError:
                 datetime.fromisoformat(start_time)
+
+            # ==================================
+            # Payload voor Apps Script
+            # ==================================
 
             payload = {
                 "sheet": "2026",
@@ -132,6 +180,10 @@ def main():
                 f"{activity_id}"
             )
 
+            # ==================================
+            # Versturen naar Google Apps Script
+            # ==================================
+
             response = requests.post(
                 apps_script_url,
                 json=payload,
@@ -142,39 +194,94 @@ def main():
                 f"  HTTP-status: {response.status_code}"
             )
 
-            try:
-                result = response.json()
-                print(f"  Antwoord: {result}")
-            except Exception:
+            # HTTP-fout
+            if response.status_code != 200:
+                print(
+                    f"  ❌ HTTP-fout: "
+                    f"{response.status_code}"
+                )
                 print(
                     f"  Antwoord: {response.text}"
                 )
+                failed_entries += 1
                 continue
 
+            # ==================================
+            # Antwoord van Apps Script uitlezen
+            # ==================================
+
+            try:
+                result = response.json()
+                print(f"  Antwoord: {result}")
+
+            except Exception:
+                print(
+                    f"  ❌ Ongeldig antwoord van Apps Script: "
+                    f"{response.text}"
+                )
+                failed_entries += 1
+                continue
+
+            # ==================================
+            # Resultaat controleren
+            # ==================================
+
             if result.get("success"):
+
                 if result.get("added"):
-                    print("  ✅ Nieuwe wandeling toegevoegd")
+                    print(
+                        "  ✅ Nieuwe wandeling toegevoegd"
+                    )
                     new_entries += 1
+
                 else:
-                    print("  ↪ Bestaat al")
+                    print(
+                        "  ↪ Bestaat al"
+                    )
+
             else:
                 print(
                     f"  ❌ Apps Script fout: "
                     f"{result.get('error')}"
                 )
+                failed_entries += 1
 
         except Exception as e:
+
             print(
                 f"❌ Fout bij verwerken activiteit: {e}"
             )
 
+            failed_entries += 1
+
+    # ======================================
+    # Eindresultaat
+    # ======================================
+
     print()
     print("======================================")
     print(
-        f"🎉 {new_entries} nieuwe wandelingen "
-        f"toegevoegd."
+        f"Nieuwe wandelingen toegevoegd: "
+        f"{new_entries}"
+    )
+    print(
+        f"Mislukte activiteiten: "
+        f"{failed_entries}"
     )
     print("======================================")
+
+    # GitHub Actions rood laten worden
+    # als één of meer activiteiten mislukt zijn.
+    if failed_entries > 0:
+        print(
+            "❌ Synchronisatie voltooid met fouten."
+        )
+        sys.exit(1)
+
+    print(
+        "🎉 Synchronisatie succesvol voltooid."
+    )
+    sys.exit(0)
 
 
 if __name__ == "__main__":
