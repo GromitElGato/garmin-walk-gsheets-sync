@@ -3,6 +3,9 @@ name: Garmin synchronisatie
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "0 6 * * *"
+
 jobs:
   sync:
     runs-on: ubuntu-latest
