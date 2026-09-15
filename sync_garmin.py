@@ -1,4 +1,3 @@
-```python
 import os
 import json
 from datetime import datetime
@@ -14,10 +13,7 @@ SHEET_NAME = "2026"
 def main():
     print("=== Garmin wandelingen synchroniseren ===")
 
-    # ---------------------------------------------------------
-    # 1. Credentials
-    # ---------------------------------------------------------
-
+    # Credentials
     garmin_email = os.environ.get("GARMIN_EMAIL")
     garmin_password = os.environ.get("GARMIN_PASSWORD")
     google_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
@@ -31,10 +27,7 @@ def main():
         print(f"SHEET_ID: {'✓' if sheet_id else '✗'}")
         return
 
-    # ---------------------------------------------------------
-    # 2. Verbinden met Garmin
-    # ---------------------------------------------------------
-
+    # Garmin
     print("Verbinden met Garmin Connect...")
 
     try:
@@ -45,10 +38,7 @@ def main():
         print(f"❌ Garmin-login mislukt: {e}")
         return
 
-    # ---------------------------------------------------------
-    # 3. Recente activiteiten ophalen
-    # ---------------------------------------------------------
-
+    # Activiteiten ophalen
     print("Activiteiten ophalen...")
 
     try:
@@ -58,10 +48,7 @@ def main():
         print(f"❌ Activiteiten ophalen mislukt: {e}")
         return
 
-    # ---------------------------------------------------------
-    # 4. Alleen wandelen selecteren
-    # ---------------------------------------------------------
-
+    # Alleen wandelactiviteiten
     walking_activities = []
 
     for activity in activities:
@@ -81,13 +68,10 @@ def main():
     print(f"✓ {len(walking_activities)} wandelactiviteiten gevonden")
 
     if not walking_activities:
-        print("Geen nieuwe wandelactiviteiten gevonden.")
+        print("Geen wandelactiviteiten gevonden.")
         return
 
-    # ---------------------------------------------------------
-    # 5. Verbinden met Google Sheets
-    # ---------------------------------------------------------
-
+    # Google Sheets
     print("Verbinden met Google Sheets...")
 
     try:
@@ -112,14 +96,7 @@ def main():
         print(f"❌ Google Sheets verbinding mislukt: {e}")
         return
 
-    # ---------------------------------------------------------
-    # 6. Bestaande Garmin-activiteiten controleren
-    #
-    # We controleren kolom E (LINK).
-    # Daardoor kunnen activiteiten met dezelfde Garmin-link
-    # nooit dubbel worden toegevoegd.
-    # ---------------------------------------------------------
-
+    # Bestaande links ophalen
     try:
         existing_data = sheet.get_all_values()
 
@@ -135,10 +112,7 @@ def main():
         print(f"❌ Bestaande gegevens konden niet worden gelezen: {e}")
         return
 
-    # ---------------------------------------------------------
-    # 7. Wandelactiviteiten toevoegen
-    # ---------------------------------------------------------
-
+    # Wandelingen verwerken
     new_entries = 0
 
     for activity in reversed(walking_activities):
@@ -154,20 +128,18 @@ def main():
                 f"https://connect.garmin.com/modern/activity/{activity_id}"
             )
 
-            # Dubbele activiteit?
+            # Dubbele activiteit vermijden
             if garmin_link in existing_links:
                 print(f"↪ Bestaat al: {garmin_link}")
                 continue
 
-            # Datum/tijd
+            # Datum en tijd
             start_time = activity.get("startTimeLocal")
 
             if not start_time:
                 print(f"⚠️ Geen starttijd voor activiteit {activity_id}")
                 continue
 
-            # Garmin geeft bijvoorbeeld:
-            # 2026-09-09 13:30:29
             try:
                 activity_datetime = datetime.strptime(
                     start_time,
@@ -176,13 +148,15 @@ def main():
             except ValueError:
                 activity_datetime = datetime.fromisoformat(start_time)
 
-            # Afstand
-            distance_meters = activity.get("distance", 0) or 0
-            distance_meters = round(distance_meters)
+            # Afstand in meters
+            distance_meters = round(
+                activity.get("distance", 0) or 0
+            )
 
             # Duur
-            duration_seconds = activity.get("duration", 0) or 0
-            duration_seconds = round(duration_seconds)
+            duration_seconds = round(
+                activity.get("duration", 0) or 0
+            )
 
             hours = duration_seconds // 3600
             minutes = (duration_seconds % 3600) // 60
@@ -196,7 +170,7 @@ def main():
                 "Wandeling"
             )
 
-            # Rij A t/m E
+            # Kolommen A t/m E
             row = [
                 activity_datetime.strftime("%-d-%-m-%Y %H:%M:%S"),
                 activity_name,
@@ -205,7 +179,7 @@ def main():
                 garmin_link,
             ]
 
-            # Toevoegen
+            # Rij toevoegen
             sheet.append_row(
                 row,
                 value_input_option="USER_ENTERED"
@@ -224,10 +198,6 @@ def main():
         except Exception as e:
             print(f"❌ Fout bij verwerken activiteit: {e}")
 
-    # ---------------------------------------------------------
-    # 8. Resultaat
-    # ---------------------------------------------------------
-
     print()
     print("======================================")
 
@@ -243,4 +213,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
