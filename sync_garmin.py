@@ -12,16 +12,23 @@ def main():
     garmin_email = os.environ.get("GARMIN_EMAIL")
     garmin_password = os.environ.get("GARMIN_PASSWORD")
     apps_script_url = os.environ.get("APPS_SCRIPT_URL")
+    sync_token = os.environ.get("GARMIN_SYNC_TOKEN")
 
     # ======================================
     # GitHub Secrets controleren
     # ======================================
 
-    if not garmin_email or not garmin_password or not apps_script_url:
+    if (
+        not garmin_email
+        or not garmin_password
+        or not apps_script_url
+        or not sync_token
+    ):
         print("❌ Vereiste GitHub Secrets ontbreken.")
         print(f"GARMIN_EMAIL: {'✓' if garmin_email else '✗'}")
         print(f"GARMIN_PASSWORD: {'✓' if garmin_password else '✗'}")
         print(f"APPS_SCRIPT_URL: {'✓' if apps_script_url else '✗'}")
+        print(f"GARMIN_SYNC_TOKEN: {'✓' if sync_token else '✗'}")
         sys.exit(1)
 
     # ======================================
@@ -79,7 +86,6 @@ def main():
         f"wandelactiviteiten gevonden"
     )
 
-    # Geen wandelingen is geen fout
     if not walking_activities:
         print("Geen wandelactiviteiten gevonden.")
         sys.exit(0)
@@ -122,34 +128,18 @@ def main():
                 failed_entries += 1
                 continue
 
-            # ==================================
-            # Afstand in meters
-            # ==================================
-
             distance = float(
                 activity.get("distance", 0) or 0
             )
-
-            # ==================================
-            # Duur in seconden
-            # ==================================
 
             duration = float(
                 activity.get("duration", 0) or 0
             )
 
-            # ==================================
-            # Garmin-link
-            # ==================================
-
             link = (
                 "https://connect.garmin.com/modern/activity/"
                 f"{activity_id}"
             )
-
-            # ==================================
-            # Datum controleren
-            # ==================================
 
             try:
                 datetime.strptime(
@@ -160,10 +150,6 @@ def main():
             except ValueError:
                 datetime.fromisoformat(start_time)
 
-            # ==================================
-            # Payload voor Apps Script
-            # ==================================
-
             payload = {
                 "sheet": "2026",
                 "activity_id": str(activity_id),
@@ -172,6 +158,7 @@ def main():
                 "distance": distance,
                 "duration": duration,
                 "link": link,
+                "token": sync_token,
             }
 
             print(
@@ -179,10 +166,6 @@ def main():
                 f"{round(distance)} m | "
                 f"{activity_id}"
             )
-
-            # ==================================
-            # Versturen naar Google Apps Script
-            # ==================================
 
             response = requests.post(
                 apps_script_url,
@@ -194,7 +177,6 @@ def main():
                 f"  HTTP-status: {response.status_code}"
             )
 
-            # HTTP-fout
             if response.status_code != 200:
                 print(
                     f"  ❌ HTTP-fout: "
@@ -205,10 +187,6 @@ def main():
                 )
                 failed_entries += 1
                 continue
-
-            # ==================================
-            # Antwoord van Apps Script uitlezen
-            # ==================================
 
             try:
                 result = response.json()
@@ -221,10 +199,6 @@ def main():
                 )
                 failed_entries += 1
                 continue
-
-            # ==================================
-            # Resultaat controleren
-            # ==================================
 
             if result.get("success"):
 
@@ -270,8 +244,6 @@ def main():
     )
     print("======================================")
 
-    # GitHub Actions rood laten worden
-    # als één of meer activiteiten mislukt zijn.
     if failed_entries > 0:
         print(
             "❌ Synchronisatie voltooid met fouten."
