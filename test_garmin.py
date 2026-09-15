@@ -1,46 +1,33 @@
-import os
-from garminconnect import Garmin
+name: Garmin synchronisatie
 
-garmin_email = os.environ.get("GARMIN_EMAIL")
-garmin_password = os.environ.get("GARMIN_PASSWORD")
+on:
+  workflow_dispatch:
 
-if not garmin_email or not garmin_password:
-    print("❌ Garmin logingegevens ontbreken.")
-    exit(1)
+  schedule:
+    - cron: "0 6 * * *"
 
-print("Verbinden met Garmin Connect...")
+jobs:
+  sync:
+    runs-on: ubuntu-latest
 
-try:
-    garmin = Garmin(garmin_email, garmin_password)
-    garmin.login()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    print("✅ Verbonden met Garmin Connect\n")
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    activities = garmin.get_activities(0, 1)
+      - name: Install dependencies
+        run: |
+          pip install garminconnect requests
 
-    if not activities:
-        print("Geen activiteiten gevonden.")
-        exit(0)
-
-    activity = activities[0]
-
-    activity_id = activity.get("activityId")
-    start_time = activity.get("startTimeLocal")
-    activity_name = activity.get("activityName")
-    distance = activity.get("distance")
-    duration = activity.get("duration")
-
-    garmin_url = f"https://connect.garmin.com/modern/activity/{activity_id}"
-
-    print("Laatste activiteit:")
-    print("-------------------")
-    print("ID:", activity_id)
-    print("Datum/tijd:", start_time)
-    print("Naam:", activity_name)
-    print("Afstand:", distance, "meter")
-    print("Duur:", duration, "seconden")
-    print("Link:", garmin_url)
-
-except Exception as e:
-    print("❌ Fout:", e)
-    exit(1)
+      - name: Sync Garmin walks to Google Sheets
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          GARMIN_SYNC_TOKEN: ${{ secrets.GARMIN_SYNC_TOKEN }}
+        run: |
+          python sync_garmin.py
