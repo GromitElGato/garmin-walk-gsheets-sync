@@ -2,7 +2,6 @@ import os
 import sys
 import time
 import requests
-from datetime import datetime
 
 from garminconnect import Garmin
 
@@ -44,9 +43,11 @@ def send_to_apps_script(
             else:
                 try:
                     result = response.json()
+
                     print(
                         f"  Antwoord: {result}"
                     )
+
                     return result
 
                 except Exception:
@@ -75,7 +76,8 @@ def send_to_apps_script(
 
 
 def main():
-    print("=== Garmin wandelingen synchroniseren ===")
+
+    print("=== Laatste Garmin-activiteit synchroniseren ===")
 
     garmin_email = os.environ.get("GARMIN_EMAIL")
     garmin_password = os.environ.get("GARMIN_PASSWORD")
@@ -89,22 +91,27 @@ def main():
         or not sync_token
     ):
         print("❌ Vereiste GitHub Secrets ontbreken.")
+
         print(
             f"GARMIN_EMAIL: "
             f"{'✓' if garmin_email else '✗'}"
         )
+
         print(
             f"GARMIN_PASSWORD: "
             f"{'✓' if garmin_password else '✗'}"
         )
+
         print(
             f"APPS_SCRIPT_URL: "
             f"{'✓' if apps_script_url else '✗'}"
         )
+
         print(
             f"GARMIN_SYNC_TOKEN: "
             f"{'✓' if sync_token else '✗'}"
         )
+
         sys.exit(1)
 
     print("Verbinden met Garmin Connect...")
@@ -114,220 +121,169 @@ def main():
             garmin_email,
             garmin_password
         )
+
         garmin.login()
+
         print("✅ Verbonden met Garmin Connect")
 
     except Exception as e:
         print(
             f"❌ Garmin-login mislukt: {e}"
         )
+
         sys.exit(1)
 
-    print("Activiteiten ophalen...")
+    print("Laatste activiteit ophalen...")
 
     try:
-        activities = garmin.get_activities(0, 50)
+        activities = garmin.get_activities(0, 1)
+
+        if not activities:
+            print("Geen activiteiten gevonden.")
+            sys.exit(0)
+
+        activity = activities[0]
+
         print(
-            f"✓ {len(activities)} "
-            f"activiteiten opgehaald"
+            f"✓ Activiteit gevonden: "
+            f"{activity.get('activityName', 'Onbekend')}"
         )
 
     except Exception as e:
         print(
-            f"❌ Activiteiten ophalen mislukt: {e}"
+            f"❌ Activiteit ophalen mislukt: {e}"
         )
+
         sys.exit(1)
 
-    walking_activities = []
-
-    for activity in activities:
-
-        activity_type = (
-            activity
-            .get("activityType", {})
-            .get("typeKey", "")
-            .lower()
-        )
-
-        if activity_type in [
-            "walking",
-            "hiking",
-            "indoor_walking",
-        ]:
-            walking_activities.append(
-                activity
-            )
-
-    print(
-        f"✓ {len(walking_activities)} "
-        f"wandelactiviteiten gevonden"
+    activity_type = (
+        activity
+        .get("activityType", {})
+        .get("typeKey", "")
+        .lower()
     )
 
-    if not walking_activities:
+    print(
+        f"Activiteitstype: {activity_type}"
+    )
+
+    if activity_type not in [
+        "walking",
+        "hiking",
+        "indoor_walking",
+    ]:
         print(
-            "Geen wandelactiviteiten gevonden."
+            "↪ Laatste activiteit is geen wandeling. "
+            "Er wordt niets toegevoegd."
         )
+
         sys.exit(0)
 
-    walking_activities.reverse()
+    activity_id = activity.get("activityId")
 
-    new_entries = 0
-    failed_entries = 0
+    if not activity_id:
+        print(
+            "❌ Activiteit heeft geen ID."
+        )
 
-    for activity in walking_activities:
+        sys.exit(1)
 
-        try:
-            activity_id = activity.get(
-                "activityId"
-            )
+    activity_name = activity.get(
+        "activityName",
+        "Wandeling"
+    )
 
-            if not activity_id:
-                print(
-                    "⚠️ Activiteit zonder ID "
-                    "overgeslagen"
-                )
-                failed_entries += 1
-                continue
+    start_time = activity.get(
+        "startTimeLocal"
+    )
 
-            activity_name = activity.get(
-                "activityName",
-                "Wandeling"
-            )
+    if not start_time:
+        print(
+            "❌ Activiteit heeft geen starttijd."
+        )
 
-            start_time = activity.get(
-                "startTimeLocal"
-            )
+        sys.exit(1)
 
-            if not start_time:
-                print(
-                    f"⚠️ Geen starttijd voor "
-                    f"activiteit {activity_id}"
-                )
-                failed_entries += 1
-                continue
+    distance = float(
+        activity.get(
+            "distance",
+            0
+        ) or 0
+    )
 
-            distance = float(
-                activity.get(
-                    "distance",
-                    0
-                ) or 0
-            )
+    duration = float(
+        activity.get(
+            "duration",
+            0
+        ) or 0
+    )
 
-            duration = float(
-                activity.get(
-                    "duration",
-                    0
-                ) or 0
-            )
+    link = (
+        "https://connect.garmin.com/"
+        "modern/activity/"
+        f"{activity_id}"
+    )
 
-            link = (
-                "https://connect.garmin.com/"
-                "modern/activity/"
-                f"{activity_id}"
-            )
-
-            try:
-                datetime.strptime(
-                    start_time,
-                    "%Y-%m-%d %H:%M:%S"
-                )
-
-            except ValueError:
-                datetime.fromisoformat(
-                    start_time
-                )
-
-            payload = {
-                "sheet": "2026",
-                "activity_id": str(
-                    activity_id
-                ),
-                "activity_name": activity_name,
-                "start_time": start_time,
-                "distance": distance,
-                "duration": duration,
-                "link": link,
-                "token": sync_token,
-            }
-
-            print(
-                f"→ Versturen: "
-                f"{activity_name} | "
-                f"{round(distance)} m | "
-                f"{activity_id}"
-            )
-
-            result = send_to_apps_script(
-                apps_script_url,
-                payload
-            )
-
-            if result is None:
-                print(
-                    "  ❌ Geen geldig antwoord "
-                    "van Apps Script na "
-                    "meerdere pogingen."
-                )
-                failed_entries += 1
-                continue
-
-            if result.get("success"):
-
-                if result.get("added"):
-                    print(
-                        "  ✅ Nieuwe wandeling "
-                        "toegevoegd"
-                    )
-                    new_entries += 1
-
-                else:
-                    print(
-                        "  ↪ Niet toegevoegd: "
-                        f"{result.get('message', 'Bestaat al')}"
-                    )
-
-            else:
-                print(
-                    "  ❌ Apps Script fout: "
-                    f"{result.get('error')}"
-                )
-                failed_entries += 1
-
-        except Exception as e:
-            print(
-                f"❌ Fout bij verwerken "
-                f"activiteit: {e}"
-            )
-            failed_entries += 1
+    payload = {
+        "sheet": "2026",
+        "activity_id": str(activity_id),
+        "activity_name": activity_name,
+        "start_time": start_time,
+        "distance": distance,
+        "duration": duration,
+        "link": link,
+        "token": sync_token,
+    }
 
     print()
     print(
-        "======================================"
-    )
-    print(
-        f"Nieuwe wandelingen toegevoegd: "
-        f"{new_entries}"
-    )
-    print(
-        f"Mislukte activiteiten: "
-        f"{failed_entries}"
-    )
-    print(
-        "======================================"
+        f"→ Versturen: "
+        f"{activity_name} | "
+        f"{round(distance)} m | "
+        f"{activity_id}"
     )
 
-    if failed_entries > 0:
+    result = send_to_apps_script(
+        apps_script_url,
+        payload
+    )
+
+    if result is None:
         print(
-            "❌ Synchronisatie voltooid "
-            "met fouten."
+            "❌ Geen geldig antwoord van Apps Script "
+            "na meerdere pogingen."
         )
+
         sys.exit(1)
 
+    if result.get("success"):
+
+        if result.get("added"):
+
+            print(
+                "✅ Nieuwe wandeling toegevoegd."
+            )
+
+        else:
+
+            print(
+                "↪ Niet toegevoegd: "
+                f"{result.get('message', 'Bestaat al')}"
+            )
+
+    else:
+
+        print(
+            "❌ Apps Script fout: "
+            f"{result.get('error')}"
+        )
+
+        sys.exit(1)
+
+    print()
     print(
-        "🎉 Synchronisatie succesvol "
-        "voltooid."
+        "🎉 Synchronisatie succesvol voltooid."
     )
-    sys.exit(0)
 
 
 if __name__ == "__main__":
